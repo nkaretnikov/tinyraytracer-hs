@@ -1,6 +1,7 @@
 -- https://github.com/ssloy/tinyraytracer/wiki/Part-1:-understandable-raytracing
 
 {-# language OverloadedStrings #-}
+{-# language NegativeLiterals #-}
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -43,17 +44,77 @@ indexes height width = go 0 0 (width * height) height width
       | j >= h    =         go (i + 1) 0       n       h w
       | otherwise = (j,i) : go (i + 1) j       (n - 1) h w
 
--- | Write an image to disk.
-render :: FilePath -> Int -> Int -> IO ()
-render file width height = BSC.writeFile file (header <> image)
+(*.) :: Vec3f -> Vec3f -> Float
+(Vec3f x1 y1 z1) *. (Vec3f x2 y2 z2) = x1 * x2 + y1 * y2 + z1 * z2
+
+(*..) :: Vec3f -> Float -> Vec3f
+(Vec3f x y z) *.. f = Vec3f (x * f) (y * f) (z * f)
+
+(-.) :: Vec3f -> Vec3f -> Vec3f
+(Vec3f x1 y1 z1) -. (Vec3f x2 y2 z2) = Vec3f (x1 - x2) (y1 - y2) (z1 - z2)
+
+-- http://web.archive.org/web/20170707080450/http://www.lighthouse3d.com/tutorials/maths/ray-sphere-intersection/
+rayIntersect :: Vec3f -> Float -> Vec3f -> Vec3f -> Bool
+rayIntersect center radius orig dir
+  | d2 > radius * radius = False
+  | t1 < 0 && t2 < 0     = False
+  | t1 < 0               = True
+  | otherwise            = True
   where
+    l :: Vec3f
+    l = center -. orig
+
+    tca :: Float
+    tca = l *. dir
+
+    d2 :: Float
+    d2 = l *. l - tca * tca
+
+    thc :: Float
+    thc = sqrt $ radius * radius - d2
+
+    t1 = tca - thc
+    t2 = tca + thc
+
+castRay :: Vec3f -> Float -> Vec3f -> Vec3f -> Vec3f
+castRay center radius orig dir =
+  if rayIntersect center radius orig dir
+  then Vec3f 0.4 0.4 0.3
+  else Vec3f 0.2 0.7 0.8  -- background color
+
+normalize :: Vec3f -> Vec3f
+normalize v = v *.. (l  / norm v)
+  where
+    l = 1
+
+    norm :: Vec3f -> Float
+    norm (Vec3f x y z) = sqrt $ x * x + y * y + z * z
+
+-- | Write an image to disk.
+render :: FilePath -> Int -> Int -> Vec3f -> Float -> IO ()
+render file width height center radius = BSC.writeFile file (header <> image)
+  where
+    -- Field of view.
+    fov :: Float
+    fov = pi / 2
+
+    fWidth :: Float
+    fWidth = intToFloat width
+
+    fHeight :: Float
+    fHeight = intToFloat height
+
     framebuffer :: Vector Vec3f
     framebuffer =
       V.fromList $
         flip fmap (indexes height width) $ \(j,i) ->
-            Vec3f (intToFloat j / intToFloat height)
-                  (intToFloat i / intToFloat width)
-                  0
+          let fi   = intToFloat i
+              fj   = intToFloat j
+              x    =  (2 * (fi + 0.5) / fWidth  - 1) * tan (fov / 2) * fWidth / fHeight
+              y    = -(2 * (fj + 0.5) / fHeight - 1) * tan (fov / 2)
+              orig = Vec3f 0 0 0
+              dir  = normalize $ Vec3f x y -1
+          in castRay center radius orig dir
 
     ppmMaxVal :: Int
     ppmMaxVal = 255
@@ -89,9 +150,15 @@ main = do
   case args of
     [file, mwidth, mheight] ->
       case (readInt mwidth, readInt mheight) of
-        (Just width, Just height) -> render file width height
+        (Just width, Just height) -> render file width height center radius
         _ -> usage
     _ -> usage
   where
     readInt :: String -> Maybe Int
     readInt = readMaybe
+
+    center :: Vec3f
+    center = Vec3f -3 0 -16
+
+    radius :: Float
+    radius = 2
