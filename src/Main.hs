@@ -9,6 +9,7 @@ import qualified Data.ByteString.Char8 as BSC
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word8)
+import Numeric.Limits (maxValue)
 import System.Environment (getArgs, getProgName)
 import Text.Read (readMaybe)
 
@@ -18,9 +19,13 @@ data Vec3f = Vec3f
   , _z :: {-# UNPACK #-} !Float
   } deriving (Eq, Show)
 
+-- XXX: Use a newtype?
+type Material = Vec3f
+
 data Sphere = Sphere
-  { _center :: Vec3f
-  , _radius :: {-# UNPACK #-} !Float
+  { _center   :: Vec3f
+  , _radius   :: {-# UNPACK #-} !Float
+  , _material :: Material
   } deriving (Eq, Show)
 
 -- XXX: May fail at runtime.
@@ -59,12 +64,12 @@ indexes height width = go 0 0 (width * height) height width
 (Vec3f x1 y1 z1) -. (Vec3f x2 y2 z2) = Vec3f (x1 - x2) (y1 - y2) (z1 - z2)
 
 -- http://web.archive.org/web/20170707080450/http://www.lighthouse3d.com/tutorials/maths/ray-sphere-intersection/
-rayIntersect :: Sphere -> Vec3f -> Vec3f -> Bool
-rayIntersect (Sphere center radius) orig dir
-  | d2 > radius * radius = False
-  | t1 < 0 && t2 < 0     = False
-  | t1 < 0               = True
-  | otherwise            = True
+rayIntersect :: Sphere -> Vec3f -> Vec3f -> Float -> (Bool, Float)
+rayIntersect (Sphere center radius _) orig dir t0
+  | d2 > radius * radius = (False, t0)
+  | t1 < 0 && t2 < 0     = (False, t2)
+  | t1 < 0               = (True, t1)
+  | otherwise            = (True, t1)
   where
     l :: Vec3f
     l = center -. orig
@@ -81,11 +86,30 @@ rayIntersect (Sphere center radius) orig dir
     t1 = tca - thc
     t2 = tca + thc
 
-castRay :: Sphere -> Vec3f -> Vec3f -> Vec3f
-castRay sphere orig dir =
-  if rayIntersect sphere orig dir
-  then Vec3f 0.4 0.4 0.3
+sceneIntersect :: [Sphere] -> Material -> Vec3f -> Vec3f -> (Bool, Material)
+sceneIntersect ss m o d = (sd < 1000, m')
+  where
+    (_, sd, m') = go 0 maxValue ss m o d
+
+    go :: Float -> Float -> [Sphere] -> Material -> Vec3f -> Vec3f -> (Float, Float, Material)
+    go distI spheresDist []               material _    _   = (distI, spheresDist, material)
+    go distI spheresDist (sphere:spheres) material orig dir =
+      let (intersects, distI') = rayIntersect sphere orig dir distI
+          material'            = _material sphere
+      in if intersects && distI' < spheresDist
+         then go distI' distI'      spheres material' orig dir
+         else go distI' spheresDist spheres material  orig dir
+
+castRay :: [Sphere] -> Vec3f -> Vec3f -> Vec3f
+castRay spheres orig dir =
+  if intersects
+  then material'
   else Vec3f 0.2 0.7 0.8  -- background color
+    where
+      (intersects, material') = sceneIntersect spheres material orig dir
+
+      material :: Vec3f
+      material = Vec3f 0 0 0
 
 normalize :: Vec3f -> Vec3f
 normalize v = v *.. (l  / norm v)
@@ -96,8 +120,8 @@ normalize v = v *.. (l  / norm v)
     norm (Vec3f x y z) = sqrt $ x * x + y * y + z * z
 
 -- | Write an image to disk.
-render :: FilePath -> Int -> Int -> Sphere -> IO ()
-render file width height sphere =
+render :: FilePath -> Int -> Int -> [Sphere] -> IO ()
+render file width height spheres =
   BSC.writeFile file (header <> image)
   where
     -- Field of view.
@@ -120,7 +144,7 @@ render file width height sphere =
               y    = -(2 * (fj + 0.5) / fHeight - 1) * tan (fov / 2)
               orig = Vec3f 0 0 0
               dir  = normalize $ Vec3f x y -1
-          in castRay sphere orig dir
+          in castRay spheres orig dir
 
     ppmMaxVal :: Int
     ppmMaxVal = 255
@@ -156,18 +180,23 @@ main = do
   case args of
     [file, mwidth, mheight] ->
       case (readInt mwidth, readInt mheight) of
-        (Just width, Just height) -> render file width height sphere
+        (Just width, Just height) -> render file width height spheres
         _ -> usage
     _ -> usage
   where
     readInt :: String -> Maybe Int
     readInt = readMaybe
 
-    sphere :: Sphere
-    sphere = Sphere center radius
+    ivory :: Material
+    ivory = Vec3f 0.4 0.4 0.3
 
-    center :: Vec3f
-    center = Vec3f -3 0 -16
+    redRubber :: Material
+    redRubber = Vec3f 0.3 0.1 0.1
 
-    radius :: Float
-    radius = 2
+    spheres :: [Sphere]
+    spheres =
+      [ Sphere (Vec3f -3    0   -16) 2 ivory
+      , Sphere (Vec3f -1.0 -1.5 -12) 2 redRubber
+      , Sphere (Vec3f  1.5 -0.5 -18) 3 redRubber
+      , Sphere (Vec3f  7    5   -18) 4 ivory
+      ]
