@@ -23,15 +23,24 @@ intToFloat = fromIntegral
 floatToInt :: Float -> Int
 floatToInt = fromEnum
 
+-- | Return a list of indexes of a 2d array.
+indexes :: Int -> Int -> [(Int,Int)]
+indexes height width = go 0 0 (width * height) height width
+  where
+    go i j n h w
+      | n <= 0    = []
+      | i >= w    =         go 0       (j + 1) n       h w
+      | j >= h    =         go (i + 1) 0       n       h w
+      | otherwise = (j,i) : go (i + 1) j       (n - 1) h w
+
+-- XXX: 'String' concatenation is inefficient.
 -- | Write an image to disk.
 render :: FilePath -> Int -> Int -> IO ()
 render file width height = writeFile file (header ++ image ++ footer)
   where
     framebuffer :: [Vec3f]
     framebuffer =
-      concat $
-        flip fmap [0..height - 1] $ \j ->
-        flip fmap [0..width - 1]  $ \i ->
+      flip fmap (indexes height width) $ \(j,i) ->
           Vec3f (intToFloat j / intToFloat height)
                 (intToFloat i / intToFloat width)
                 0
@@ -44,12 +53,10 @@ render file width height = writeFile file (header ++ image ++ footer)
     image :: String
     image =
       intercalate " " $
-      concat $
-        flip fmap [0..height * width - 1] $ \i ->
         -- XXX: Take advantage of the Haskell 'Vec3f' representation.
         -- In the original C++ code, 'Vec3f' is just an array of size 3.
-        flip fmap [0..3 - 1] $ \j ->
-          show(floatToInt(255 * max 0 (min 1 (framebuffer !! i !!. j))))
+        flip fmap (indexes (width * height) 3) $ \(i,j) ->
+          show $ floatToInt $ 255 * (max 0 (min 1 (framebuffer !! i !!. j)))
 
     footer :: String
     footer = "\n"  -- XXX: required for the ASCII version
