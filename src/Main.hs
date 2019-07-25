@@ -28,6 +28,11 @@ data Sphere = Sphere
   , _material :: Material
   } deriving (Eq, Show)
 
+data Light = Light
+  { _position :: Vec3f
+  , _intensity :: {-# UNPACK #-} !Float
+  } deriving (Eq, Show)
+
 -- XXX: May fail at runtime.
 (!!.) :: Vec3f -> Int -> Float
 (!!.) v 0 = _x v
@@ -60,6 +65,9 @@ indexes height width = go 0 0 (width * height) height width
 (*..) :: Vec3f -> Float -> Vec3f
 (Vec3f x y z) *.. f = Vec3f (x * f) (y * f) (z * f)
 
+(+.) :: Vec3f -> Vec3f -> Vec3f
+(Vec3f x1 y1 z1) +. (Vec3f x2 y2 z2) = Vec3f (x1 + x2) (y1 + y2) (z1 + z2)
+
 (-.) :: Vec3f -> Vec3f -> Vec3f
 (Vec3f x1 y1 z1) -. (Vec3f x2 y2 z2) = Vec3f (x1 - x2) (y1 - y2) (z1 - z2)
 
@@ -86,30 +94,53 @@ rayIntersect (Sphere center radius _) orig dir t0
     t1 = tca - thc
     t2 = tca + thc
 
-sceneIntersect :: [Sphere] -> Material -> Vec3f -> Vec3f -> (Bool, Material)
-sceneIntersect ss m o d = (sd < 1000, m')
+sceneIntersect
+  :: [Sphere] -> Material -> Vec3f -> Vec3f -> Vec3f -> Vec3f
+  -> (Bool, Material, Vec3f, Vec3f)
+sceneIntersect ss m o d p n = (sd < 1000, m', p', n')
   where
-    (_, sd, m') = go 0 maxValue ss m o d
+    (_, sd, m', p', n') = go 0 maxValue ss m o d p n
 
-    go :: Float -> Float -> [Sphere] -> Material -> Vec3f -> Vec3f -> (Float, Float, Material)
-    go distI spheresDist []               material _    _   = (distI, spheresDist, material)
-    go distI spheresDist (sphere:spheres) material orig dir =
+    go :: Float -> Float -> [Sphere] -> Material -> Vec3f -> Vec3f -> Vec3f -> Vec3f
+       -> (Float, Float, Material, Vec3f, Vec3f)
+    go distI spheresDist []               material _    _   point normal =
+      (distI, spheresDist, material, point, normal)
+    go distI spheresDist (sphere:spheres) material orig dir point normal =
       let (intersects, distI') = rayIntersect sphere orig dir distI
           material'            = _material sphere
+          point'               = orig +. (dir *.. distI')
+          normal'              = normalize $ (point' -. _center sphere)
       in if intersects && distI' < spheresDist
-         then go distI' distI'      spheres material' orig dir
-         else go distI' spheresDist spheres material  orig dir
+         then go distI' distI'      spheres material' orig dir point' normal'
+         else go distI' spheresDist spheres material  orig dir point  normal
 
-castRay :: [Sphere] -> Vec3f -> Vec3f -> Vec3f
-castRay spheres orig dir =
+castRay :: [Sphere] -> [Light] -> Vec3f -> Vec3f -> Vec3f
+castRay spheres lights orig dir =
   if intersects
-  then material'
+  then material' *.. diffuseLightIntensity'
   else Vec3f 0.2 0.7 0.8  -- background color
     where
-      (intersects, material') = sceneIntersect spheres material orig dir
+      (intersects, material', point', n') = sceneIntersect spheres material orig dir point n
+      diffuseLightIntensity' = go diffuseLightIntensity lights
 
       material :: Vec3f
       material = Vec3f 0 0 0
+
+      n :: Vec3f
+      n = Vec3f 0 0 0
+
+      point :: Vec3f
+      point = Vec3f 0 0 0
+
+      diffuseLightIntensity :: Float
+      diffuseLightIntensity = 0
+
+      go :: Float -> [Light] -> Float
+      go dli []     = dli
+      go dli (l:ls) =
+        let lightDir = normalize $ (_position l) -. point'
+            dli'     = dli + (_intensity l) * (max 0 (lightDir *. n'))
+        in go dli' ls
 
 normalize :: Vec3f -> Vec3f
 normalize v = v *.. (l  / norm v)
@@ -120,8 +151,8 @@ normalize v = v *.. (l  / norm v)
     norm (Vec3f x y z) = sqrt $ x * x + y * y + z * z
 
 -- | Write an image to disk.
-render :: FilePath -> Int -> Int -> [Sphere] -> IO ()
-render file width height spheres =
+render :: FilePath -> Int -> Int -> [Sphere] -> [Light] -> IO ()
+render file width height spheres lights =
   BSC.writeFile file (header <> image)
   where
     -- Field of view.
@@ -144,7 +175,7 @@ render file width height spheres =
               y    = -(2 * (fj + 0.5) / fHeight - 1) * tan (fov / 2)
               orig = Vec3f 0 0 0
               dir  = normalize $ Vec3f x y -1
-          in castRay spheres orig dir
+          in castRay spheres lights orig dir
 
     ppmMaxVal :: Int
     ppmMaxVal = 255
@@ -180,7 +211,7 @@ main = do
   case args of
     [file, mwidth, mheight] ->
       case (readInt mwidth, readInt mheight) of
-        (Just width, Just height) -> render file width height spheres
+        (Just width, Just height) -> render file width height spheres lights
         _ -> usage
     _ -> usage
   where
@@ -199,4 +230,9 @@ main = do
       , Sphere (Vec3f -1.0 -1.5 -12) 2 redRubber
       , Sphere (Vec3f  1.5 -0.5 -18) 3 redRubber
       , Sphere (Vec3f  7    5   -18) 4 ivory
+      ]
+
+    lights :: [Light]
+    lights =
+      [ Light (Vec3f -20 20 20) 1.5
       ]
