@@ -1,13 +1,20 @@
 -- https://github.com/ssloy/tinyraytracer/wiki/Part-1:-understandable-raytracing
 
-import Data.List (intercalate)
+{-# language OverloadedStrings #-}
+
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BSC
+import Data.Vector (Vector)
+import qualified Data.Vector as V
+import Data.Word (Word8)
 import System.Environment (getArgs, getProgName)
 import Text.Read (readMaybe)
 
 data Vec3f = Vec3f
-  { _x :: Float
-  , _y :: Float
-  , _z :: Float
+  { _x :: {-# UNPACK #-} !Float
+  , _y :: {-# UNPACK #-} !Float
+  , _z :: {-# UNPACK #-} !Float
   } deriving (Eq, Show)
 
 -- XXX: May fail at runtime.
@@ -20,8 +27,11 @@ data Vec3f = Vec3f
 intToFloat :: Int -> Float
 intToFloat = fromIntegral
 
-floatToInt :: Float -> Int
-floatToInt = fromEnum
+-- floatToInt :: Float -> Int
+-- floatToInt = fromEnum
+
+floatToWord8 :: Float -> Word8
+floatToWord8 = fromIntegral . fromEnum
 
 -- | Return a list of indexes of a 2d array.
 indexes :: Int -> Int -> [(Int,Int)]
@@ -33,33 +43,40 @@ indexes height width = go 0 0 (width * height) height width
       | j >= h    =         go (i + 1) 0       n       h w
       | otherwise = (j,i) : go (i + 1) j       (n - 1) h w
 
--- XXX: 'String' concatenation is inefficient.
 -- | Write an image to disk.
 render :: FilePath -> Int -> Int -> IO ()
-render file width height = writeFile file (header ++ image ++ footer)
+render file width height = BSC.writeFile file (header <> image)
   where
-    framebuffer :: [Vec3f]
+    framebuffer :: Vector Vec3f
     framebuffer =
-      flip fmap (indexes height width) $ \(j,i) ->
-          Vec3f (intToFloat j / intToFloat height)
-                (intToFloat i / intToFloat width)
-                0
+      V.fromList $
+        flip fmap (indexes height width) $ \(j,i) ->
+            Vec3f (intToFloat j / intToFloat height)
+                  (intToFloat i / intToFloat width)
+                  0
 
-    -- XXX: Use the ASCII version to avoid dealing with bytestrings.
-    -- https://en.wikipedia.org/wiki/Netpbm_format#File_format_description
-    header :: String
-    header = "P3\n" ++ show width ++ " " ++ show height ++ "\n255\n"
+    ppmMaxVal :: Int
+    ppmMaxVal = 255
 
-    image :: String
+    header :: ByteString
+    header =
+      BSC.concat
+        [ "P6\n"
+        , BSC.pack (show width)
+        , " "
+        , BSC.pack (show height)
+        , "\n"
+        , BSC.pack (show ppmMaxVal)
+        , "\n"
+        ]
+
+    image :: ByteString
     image =
-      intercalate " " $
+      BS.pack $
         -- XXX: Take advantage of the Haskell 'Vec3f' representation.
         -- In the original C++ code, 'Vec3f' is just an array of size 3.
         flip fmap (indexes (width * height) 3) $ \(i,j) ->
-          show $ floatToInt $ 255 * (max 0 (min 1 (framebuffer !! i !!. j)))
-
-    footer :: String
-    footer = "\n"  -- XXX: required for the ASCII version
+          floatToWord8 $ (intToFloat ppmMaxVal) * (max 0 (min 1 (framebuffer V.! i !!. j)))
 
 usage :: IO ()
 usage = do
