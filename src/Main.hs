@@ -18,6 +18,11 @@ data Vec3f = Vec3f
   , _z :: {-# UNPACK #-} !Float
   } deriving (Eq, Show)
 
+data Sphere = Sphere
+  { _center :: Vec3f
+  , _radius :: {-# UNPACK #-} !Float
+  } deriving (Eq, Show)
+
 -- XXX: May fail at runtime.
 (!!.) :: Vec3f -> Int -> Float
 (!!.) v 0 = _x v
@@ -54,8 +59,8 @@ indexes height width = go 0 0 (width * height) height width
 (Vec3f x1 y1 z1) -. (Vec3f x2 y2 z2) = Vec3f (x1 - x2) (y1 - y2) (z1 - z2)
 
 -- http://web.archive.org/web/20170707080450/http://www.lighthouse3d.com/tutorials/maths/ray-sphere-intersection/
-rayIntersect :: Vec3f -> Float -> Vec3f -> Vec3f -> Bool
-rayIntersect center radius orig dir
+rayIntersect :: Sphere -> Vec3f -> Vec3f -> Bool
+rayIntersect (Sphere center radius) orig dir
   | d2 > radius * radius = False
   | t1 < 0 && t2 < 0     = False
   | t1 < 0               = True
@@ -76,9 +81,9 @@ rayIntersect center radius orig dir
     t1 = tca - thc
     t2 = tca + thc
 
-castRay :: Vec3f -> Float -> Vec3f -> Vec3f -> Vec3f
-castRay center radius orig dir =
-  if rayIntersect center radius orig dir
+castRay :: Sphere -> Vec3f -> Vec3f -> Vec3f
+castRay sphere orig dir =
+  if rayIntersect sphere orig dir
   then Vec3f 0.4 0.4 0.3
   else Vec3f 0.2 0.7 0.8  -- background color
 
@@ -91,8 +96,9 @@ normalize v = v *.. (l  / norm v)
     norm (Vec3f x y z) = sqrt $ x * x + y * y + z * z
 
 -- | Write an image to disk.
-render :: FilePath -> Int -> Int -> Vec3f -> Float -> IO ()
-render file width height center radius = BSC.writeFile file (header <> image)
+render :: FilePath -> Int -> Int -> Sphere -> IO ()
+render file width height sphere =
+  BSC.writeFile file (header <> image)
   where
     -- Field of view.
     fov :: Float
@@ -114,7 +120,7 @@ render file width height center radius = BSC.writeFile file (header <> image)
               y    = -(2 * (fj + 0.5) / fHeight - 1) * tan (fov / 2)
               orig = Vec3f 0 0 0
               dir  = normalize $ Vec3f x y -1
-          in castRay center radius orig dir
+          in castRay sphere orig dir
 
     ppmMaxVal :: Int
     ppmMaxVal = 255
@@ -150,12 +156,15 @@ main = do
   case args of
     [file, mwidth, mheight] ->
       case (readInt mwidth, readInt mheight) of
-        (Just width, Just height) -> render file width height center radius
+        (Just width, Just height) -> render file width height sphere
         _ -> usage
     _ -> usage
   where
     readInt :: String -> Maybe Int
     readInt = readMaybe
+
+    sphere :: Sphere
+    sphere = Sphere center radius
 
     center :: Vec3f
     center = Vec3f -3 0 -16
