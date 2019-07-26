@@ -69,9 +69,12 @@ floatToInt = fromEnum
 floatToWord8 :: Float -> Word8
 floatToWord8 = fromIntegral . fromEnum
 
+newtype Height = Height { _fromHeight :: Int }
+newtype Width  = Width  { _fromWidth  :: Int }
+
 -- | Return a list of indexes of a 2d array.
-indexes :: Int -> Int -> [(Int,Int)]
-indexes height width = go 0 0 (width * height) height width
+indexes :: Height -> Width -> [(Int,Int)]
+indexes (Height height) (Width width) = go 0 0 (width * height) height width
   where
     go i j n h w
       | n <= 0    = []
@@ -276,7 +279,7 @@ norm :: Vec3f -> Float
 norm (Vec3f x y z) = sqrt $ x * x + y * y + z * z
 
 -- | Write an image to disk.
-render :: FilePath -> Int -> Int -> [Sphere] -> [Light] -> IO ()
+render :: FilePath -> Width -> Height -> [Sphere] -> [Light] -> IO ()
 render file width height spheres lights =
   BSC.writeFile file (header <> image)
   where
@@ -285,10 +288,10 @@ render file width height spheres lights =
     fov = pi / 2
 
     fWidth :: Float
-    fWidth = intToFloat width
+    fWidth = intToFloat $ _fromWidth width
 
     fHeight :: Float
-    fHeight = intToFloat height
+    fHeight = intToFloat $ _fromHeight height
 
     framebuffer :: Vector Vec3f
     framebuffer =
@@ -310,9 +313,9 @@ render file width height spheres lights =
     header =
       BSC.concat
         [ "P6\n"
-        , BSC.pack (show width)
+        , BSC.pack (show $ _fromWidth width)
         , " "
-        , BSC.pack (show height)
+        , BSC.pack (show $ _fromHeight height)
         , "\n"
         , BSC.pack (show ppmMaxVal)
         , "\n"
@@ -323,13 +326,16 @@ render file width height spheres lights =
       BS.pack $
         -- XXX: Take advantage of the Haskell 'Vec3f' representation.
         -- In the original C++ code, 'Vec3f' is just an array of size 3.
-        flip fmap (indexes (width * height) 3) $ \(i,j) ->
+        flip fmap (indexes iHeight iWidth) $ \(i,j) ->
           let c@(Vec3f x y z) = framebuffer V.! i
               fmax            = max x $ max y z
               c'              = c *.. (1 / fmax)
           in if (fmax > 1)
              then floatToWord8 $ (intToFloat ppmMaxVal) * (max 0 (min 1 (c' !!. j)))
              else floatToWord8 $ (intToFloat ppmMaxVal) * (max 0 (min 1 (c  !!. j)))
+      where
+        iHeight = Height $ _fromWidth width * _fromHeight height
+        iWidth  = Width 3
 
 usage :: IO ()
 usage = do
@@ -342,7 +348,8 @@ main = do
   case args of
     [file, mwidth, mheight] ->
       case (readInt mwidth, readInt mheight) of
-        (Just width, Just height) -> render file width height spheres lights
+        (Just width, Just height)
+          -> render file (Width width) (Height height) spheres lights
         _ -> usage
     _ -> usage
   where
