@@ -149,23 +149,24 @@ refract i n refractiveIndex =
 sceneIntersect
   :: [Sphere] -> Material -> Vec3f -> Vec3f -> Vec3f -> Vec3f
   -> (Bool, Material, Vec3f, Vec3f)
-sceneIntersect ss m o d p n = (sd < 1000, m', p', n')
+sceneIntersect spheres material orig dir point normal =
+  (spheresDist < 1000, material', point', normal')
   where
-    (sd, m', p', n') = go maxValue ss m o d p n
+    (spheresDist, material', point', normal')
+      = go maxValue spheres material orig dir point normal
 
     go :: Float -> [Sphere] -> Material -> Vec3f -> Vec3f -> Vec3f -> Vec3f
        -> (Float, Material, Vec3f, Vec3f)
-    go spheresDist []               material _    _   point normal =
-      (spheresDist, material, point, normal)
-    go spheresDist (sphere:spheres) material orig dir point normal =
-      let distI                = 0
-          (intersects, distI') = rayIntersect sphere orig dir distI
-          material'            = _material sphere
-          point'               = orig +. (dir *.. distI')
-          normal'              = normalize $ (point' -. _center sphere)
-      in if intersects && distI' < spheresDist
-         then go distI'      spheres material' orig dir point' normal'
-         else go spheresDist spheres material  orig dir point  normal
+    go sd []     m _ _ p n = (sd, m, p, n)
+    go sd (s:ss) m o d p n =
+      let di                = 0
+          (intersects, di') = rayIntersect s o d di
+          m'                = _material s
+          p'                = o +. (d *.. di')
+          n'                = normalize $ (p' -. _center s)
+      in if intersects && di' < sd
+         then go di' ss m' o d p' n'
+         else go sd  ss m  o d p  n
 
 castRay :: [Sphere] -> [Light] -> Int -> Vec3f -> Vec3f -> Vec3f
 castRay spheres lights depth orig dir =
