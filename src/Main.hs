@@ -127,12 +127,12 @@ rayIntersect (Sphere center radius _) (Orig orig) (Dir dir) t0
     t1 = tca - thc
     t2 = tca + thc
 
-reflect :: Vec3f -> Vec3f -> Vec3f
-reflect i n = i -. ((n *.. 2) *.. (i *. n))
+reflect :: Dir -> Normal -> Vec3f
+reflect (Dir i) (Normal n) = i -. ((n *.. 2) *.. (i *. n))
 
 -- | Snell's law, see <https://en.wikipedia.org/wiki/Snell%27s_law>.
-refract :: Vec3f -> Vec3f -> Float -> Vec3f
-refract i n refractiveIndex =
+refract :: Dir -> Normal -> Float -> Vec3f
+refract (Dir i) (Normal n) refractiveIndex =
   if k < 0
   then Vec3f 0 0 0
   else (i *.. eta) +. (n' *.. (eta * cosi' - sqrt k))
@@ -157,24 +157,27 @@ refract i n refractiveIndex =
 
     k = 1 - eta * eta * (1 - cosi' * cosi')
 
+newtype Point  = Point  { _fromPoint  :: Vec3f }
+newtype Normal = Normal { _fromNormal :: Vec3f }
+
 sceneIntersect
-  :: [Sphere] -> Material -> Orig -> Dir -> Vec3f -> Vec3f
-  -> (Bool, Material, Vec3f, Vec3f)
+  :: [Sphere] -> Material -> Orig -> Dir -> Point -> Normal
+  -> (Bool, Material, Point, Normal)
 sceneIntersect spheres material orig dir point normal =
   ((min spheresDist checkerboardDist) < 1000, material'', point'', normal'')
   where
     (spheresDist, material', point', normal')
       = go maxValue spheres material orig dir point normal
 
-    go :: Float -> [Sphere] -> Material -> Orig -> Dir -> Vec3f -> Vec3f
-       -> (Float, Material, Vec3f, Vec3f)
+    go :: Float -> [Sphere] -> Material -> Orig -> Dir -> Point -> Normal
+       -> (Float, Material, Point, Normal)
     go sd []     m _ _ p n = (sd, m, p, n)
     go sd (s:ss) m o d p n =
       let di                = 0
           (intersects, di') = rayIntersect s o d di
           m'                = _material s
-          p'                = (_fromOrig o) +. ((_fromDir d) *.. di')
-          n'                = normalize $ (p' -. _center s)
+          p'                = Point $ (_fromOrig o) +. ((_fromDir d) *.. di')
+          n'                = Normal $ normalize $ (_fromPoint p' -. _center s)
       in if intersects && di' < sd
          then go di' ss m' o d p' n'
          else go sd  ss m  o d p  n
@@ -184,10 +187,10 @@ sceneIntersect spheres material orig dir point normal =
       then
         -- Checkerboard plane equation: 'y = -4'.
         let d = -(_v3f_y (_fromOrig orig) + 4) / (_v3f_y $ _fromDir dir)
-            p@(Vec3f x _ z) = (_fromOrig orig) +. ((_fromDir dir) *.. d)
+            p@(Point (Vec3f x _ z)) = Point $ (_fromOrig orig) +. ((_fromDir dir) *.. d)
         in if (d > 0 && abs x < 10 && z < -10 && z > -30 && d < spheresDist)
            then
-             let n = Vec3f 0 1 0
+             let n = Normal $ Vec3f 0 1 0
                  diffuseColor =
                    if ((floatToInt (0.5 * x + 1000) + floatToInt (0.5 * z)) .&. 1) /= 0
                    then Vec3f 1   1   1
@@ -219,25 +222,25 @@ castRay spheres lights depth orig dir =
       material :: Material
       material = makeMaterial
 
-      n :: Vec3f
-      n = Vec3f 0 0 0
+      n :: Normal
+      n = Normal $ Vec3f 0 0 0
 
-      point :: Vec3f
-      point = Vec3f 0 0 0
+      point :: Point
+      point = Point $ Vec3f 0 0 0
 
-      reflectDir = Dir $ normalize $ reflect (_fromDir dir) n'
-      refractDir = Dir $ normalize $ refract (_fromDir dir) n' (_refractiveIndex material')
+      reflectDir = Dir $ normalize $ reflect dir n'
+      refractDir = Dir $ normalize $ refract dir n' (_refractiveIndex material')
 
       -- Offset the original point to avoid occlusion by the object itself.
       reflectOrig = Orig $
-        if (_fromDir reflectDir *. n') < 0
-        then point' -. (n' *.. 1e-3)
-        else point' +. (n' *.. 1e-3)
+        if (_fromDir reflectDir *. _fromNormal n') < 0
+        then _fromPoint point' -. (_fromNormal n' *.. 1e-3)
+        else _fromPoint point' +. (_fromNormal n' *.. 1e-3)
 
       refractOrig = Orig $
-        if (_fromDir refractDir *. n') < 0
-        then point' -. (n' *.. 1e-3)
-        else point' +. (n' *.. 1e-3)
+        if (_fromDir refractDir *. _fromNormal n') < 0
+        then _fromPoint point' -. (_fromNormal n' *.. 1e-3)
+        else _fromPoint point' +. (_fromNormal n' *.. 1e-3)
 
       reflectColor = castRay spheres lights (depth + 1) reflectOrig reflectDir
       refractColor = castRay spheres lights (depth + 1) refractOrig refractDir
@@ -251,28 +254,28 @@ castRay spheres lights depth orig dir =
       go :: Float -> Float -> [Light] -> (Float, Float)
       go dli sli []     = (dli, sli)
       go dli sli (l:ls) =
-        let lightDir      = Dir $ normalize $ (_position l) -. point'
-            lightDistance = norm      $ (_position l) -. point'
+        let lightDir      = Dir $ normalize $ (_position l) -. (_fromPoint point')
+            lightDistance =       norm      $ (_position l) -. (_fromPoint point')
 
             -- Check if a point lies in the shadow of a light.
             shadowOrig = Orig $
-              if (_fromDir lightDir *. n') < 0
-              then point' -. (n' *.. 1e-3)
-              else point' +. (n' *.. 1e-3)
+              if (_fromDir lightDir *. _fromNormal n') < 0
+              then _fromPoint point' -. (_fromNormal n' *.. 1e-3)
+              else _fromPoint point' +. (_fromNormal n' *.. 1e-3)
 
-            shadowPoint = Vec3f 0 0 0
-            shadowN     = Vec3f 0 0 0
+            shadowPoint = Point $ Vec3f 0 0 0
+            shadowN     = Normal $ Vec3f 0 0 0
             tmpMaterial = makeMaterial
 
             (intersects', _, shadowPoint', _)
               = sceneIntersect spheres tmpMaterial shadowOrig lightDir shadowPoint shadowN
 
-            refl = minus $ reflect (minus $ _fromDir lightDir) n'
-            dli' = dli + (_intensity l) * (max 0 (_fromDir lightDir *. n'))
+            refl = minus $ reflect (Dir $ minus $ _fromDir lightDir) n'
+            dli' = dli + (_intensity l) * (max 0 (_fromDir lightDir *. _fromNormal n'))
             sli' = sli + ((max 0 (refl *. _fromDir dir)) ** (_specularExponent material'))
                  * _intensity l
 
-        in if intersects' && norm (shadowPoint' -. _fromOrig shadowOrig) < lightDistance
+        in if intersects' && norm (_fromPoint shadowPoint' -. _fromOrig shadowOrig) < lightDistance
            then go dli  sli  ls
            else go dli' sli' ls
 
