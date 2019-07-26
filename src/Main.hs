@@ -161,20 +161,37 @@ castRay spheres lights orig dir =
       go :: Float -> Float -> [Light] -> (Float, Float)
       go dli sli []     = (dli, sli)
       go dli sli (l:ls) =
-        let lightDir = normalize $ (_position l) -. point'
-            dli'     = dli + (_intensity l) * (max 0 (lightDir *. n'))
-            refl     = minus $ reflect (minus lightDir) n'
-            sli'     = sli + ((max 0 (refl *. dir)) ** (_specularExponent material'))
-                     * _intensity l
-        in go dli' sli' ls
+        let lightDir      = normalize $ (_position l) -. point'
+            lightDistance = norm      $ (_position l) -. point'
+
+            -- Check if a point lies in the shadow of a light.
+            shadowOrig = if (lightDir *. n') < 0
+                         then point' -. (n' *.. 1e-3)
+                         else point' +. (n' *.. 1e-3)
+
+            shadowPoint = Vec3f 0 0 0
+            shadowN     = Vec3f 0 0 0
+            tmpMaterial = makeMaterial
+
+            (intersects', _, shadowPoint', _)
+              = sceneIntersect spheres tmpMaterial shadowOrig lightDir shadowPoint shadowN
+
+            refl = minus $ reflect (minus lightDir) n'
+            dli' = dli + (_intensity l) * (max 0 (lightDir *. n'))
+            sli' = sli + ((max 0 (refl *. dir)) ** (_specularExponent material'))
+                 * _intensity l
+
+        in if intersects' && norm (shadowPoint' -. shadowOrig) < lightDistance
+           then go dli  sli  ls
+           else go dli' sli' ls
 
 normalize :: Vec3f -> Vec3f
 normalize v = v *.. (l  / norm v)
   where
     l = 1
 
-    norm :: Vec3f -> Float
-    norm (Vec3f x y z) = sqrt $ x * x + y * y + z * z
+norm :: Vec3f -> Float
+norm (Vec3f x y z) = sqrt $ x * x + y * y + z * z
 
 -- | Write an image to disk.
 render :: FilePath -> Int -> Int -> [Sphere] -> [Light] -> IO ()
