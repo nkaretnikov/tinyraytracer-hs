@@ -82,18 +82,36 @@ indexes (Height height) (Width width) = go 0 0 (width * height) height width
       | j >= h    =         go (i + 1) 0       n       h w
       | otherwise = (j,i) : go (i + 1) j       (n - 1) h w
 
+-- | Dot (inner) product.
+-- Formula:
+-- @
+-- v1 . v2 = v1x*v2x + v1y*v2y + v1z*v2z
+-- @
+--
+-- The relation with the cosine of the angle between v1 and v2:
+-- @
+-- v1 . v2 = |v1| |v2| * cos(a)
+-- @
+--
+-- The dot product of two vectors is zero if any of the vectors is null
+-- or if the vectors are orthogonal (the angle is 90 degrees).
+--
+-- http://web.archive.org/web/20170707014314/http://www.lighthouse3d.com/tutorials/maths/inner-product/
 infixl 7 *.
 (*.) :: Vec3f -> Vec3f -> Float
 (Vec3f x1 y1 z1) *. (Vec3f x2 y2 z2) = x1 * x2 + y1 * y2 + z1 * z2
 
+-- | Scalar multiplication.
 infixl 7 *..
 (*..) :: Vec3f -> Float -> Vec3f
 (Vec3f x y z) *.. f = Vec3f (x * f) (y * f) (z * f)
 
+-- | Vector addition.
 infixl 6 +.
 (+.) :: Vec3f -> Vec3f -> Vec3f
 (Vec3f x1 y1 z1) +. (Vec3f x2 y2 z2) = Vec3f (x1 + x2) (y1 + y2) (z1 + z2)
 
+-- | Vector subtraction.
 infixl 6 -.
 (-.) :: Vec3f -> Vec3f -> Vec3f
 (Vec3f x1 y1 z1) -. (Vec3f x2 y2 z2) = Vec3f (x1 - x2) (y1 - y2) (z1 - z2)
@@ -104,23 +122,60 @@ minus v = v *.. -1
 newtype Orig = Orig { _fromOrig :: Vec3f }
 newtype Dir  = Dir  { _fromDir  :: Vec3f }
 
+-- | Parametric equation for points on the line:
+-- @
+-- point(t) = p + t * v
+-- @
+-- where @p@ is a point, @v@ is a vector, and @t@ is a scalar.
+--
+-- Points on the line can be obtained by varying @t@.
+--
+-- If @t@ is zero, the equation returns the point @p@.
+--
+-- A note on terminology:
+-- * for a line, @t@ can take any values
+-- * for a ray, @t@ must be non-negative.
+--
+-- The parametric equation can be used with two points @p@ and @p1@.
+-- In this case, the vector can be obtained with:
+-- @
+-- v = p1 - p
+-- @
+--
+-- http://web.archive.org/web/20170707042622/http://www.lighthouse3d.com/tutorials/maths/line-and-rays/
+--
 -- http://web.archive.org/web/20170707080450/http://www.lighthouse3d.com/tutorials/maths/ray-sphere-intersection/
 rayIntersect :: Sphere -> Orig -> Dir -> Float -> (Bool, Float)
 rayIntersect (Sphere center radius _) (Orig orig) (Dir dir) t0
+  -- If the distance is larger than the radius of a sphere,
+  -- there is no intersection.
   | d2 > radius * radius = (False, t0)
   | t1 < 0 && t2 < 0     = (False, t2)
   | t1 < 0               = (True, t2)
   | otherwise            = (True, t1)
   where
+    -- Find the vector from the origin to the center of a sphere.
     l :: Vec3f
     l = center -. orig
 
     tca :: Float
     tca = l *. dir
 
+    -- Squared distance between the center of a sphere and the projection point
+    -- on the ray.
     d2 :: Float
     d2 = l *. l - tca * tca
 
+    -- Distance from the projection of the center of a sphere and the
+    -- intersection point.
+    --
+    -- A right triangle is formed by the projection point, the intersection point,
+    -- and the center.  The Pythagoras' theorem can be used to find one of the
+    -- following:
+    -- * the radius (the distance between the center and the intersection point)
+    -- * the distance between the center and the projection point on the ray
+    -- * the distance between the projection point and the intersection point on
+    --   the ray.
     thc :: Float
     thc = sqrt $ radius * radius - d2
 
