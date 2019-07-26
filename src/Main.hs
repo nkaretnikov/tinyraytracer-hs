@@ -3,6 +3,7 @@
 {-# language OverloadedStrings #-}
 {-# language NegativeLiterals #-}
 
+import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
@@ -62,8 +63,8 @@ data Light = Light
 intToFloat :: Int -> Float
 intToFloat = fromIntegral
 
--- floatToInt :: Float -> Int
--- floatToInt = fromEnum
+floatToInt :: Float -> Int
+floatToInt = fromEnum
 
 floatToWord8 :: Float -> Word8
 floatToWord8 = fromIntegral . fromEnum
@@ -150,7 +151,7 @@ sceneIntersect
   :: [Sphere] -> Material -> Vec3f -> Vec3f -> Vec3f -> Vec3f
   -> (Bool, Material, Vec3f, Vec3f)
 sceneIntersect spheres material orig dir point normal =
-  (spheresDist < 1000, material', point', normal')
+  ((min spheresDist checkerboardDist) < 1000, material'', point'', normal'')
   where
     (spheresDist, material', point', normal')
       = go maxValue spheres material orig dir point normal
@@ -167,6 +168,25 @@ sceneIntersect spheres material orig dir point normal =
       in if intersects && di' < sd
          then go di' ss m' o d p' n'
          else go sd  ss m  o d p  n
+
+    (checkerboardDist, material'', point'', normal'') =
+      if abs (_v3f_y dir) > 1e-3
+      then
+        -- Checkerboard plane equation: 'y = -4'.
+        let d = -(_v3f_y orig + 4) / (_v3f_y dir)
+            p@(Vec3f x _ z) = orig +. (dir *.. d)
+        in if (d > 0 && abs x < 10 && z < -10 && z > -30 && d < spheresDist)
+           then
+             let n = Vec3f 0 1 0
+                 diffuseColor =
+                   if ((floatToInt (0.5 * x + 1000) + floatToInt (0.5 * z)) .&. 1) /= 0
+                   then Vec3f 1   1   1
+                   else Vec3f 1 0.7 0.3
+                 diffuseColor' = diffuseColor *.. 0.3
+                 m = material' { _diffuseColor = diffuseColor' }
+             in (d, m, p, n)
+           else (maxValue, material', point', normal')
+      else (maxValue, material', point', normal')
 
 castRay :: [Sphere] -> [Light] -> Int -> Vec3f -> Vec3f -> Vec3f
 castRay spheres lights depth orig dir =
