@@ -24,14 +24,22 @@ data Vec3f = Vec3f
   , _v3f_z :: {-# UNPACK #-} !Float
   } deriving (Eq, Show)
 
+data Vec4f = Vec4f
+  { _v4f_x :: {-# UNPACK #-} !Float
+  , _v4f_y :: {-# UNPACK #-} !Float
+  , _v4f_z :: {-# UNPACK #-} !Float
+  , _v4f_w :: {-# UNPACK #-} !Float
+  } deriving (Eq, Show)
+
 data Material = Material
-  { _albedo           :: Vec3f
+  { _refractiveIndex  :: {-# UNPACK #-} !Float
+  , _albedo           :: Vec4f
   , _diffuseColor     :: Vec3f
   , _specularExponent :: {-# UNPACK #-} !Float
   } deriving (Eq, Show)
 
 makeMaterial :: Material
-makeMaterial = Material (Vec3f 1 0 0) (Vec3f 0 0 0) 0
+makeMaterial = Material 1 (Vec4f 1 0 0 0) (Vec3f 0 0 0) 0
 
 data Sphere = Sphere
   { _center   :: Vec3f
@@ -111,6 +119,33 @@ rayIntersect (Sphere center radius _) orig dir t0
 reflect :: Vec3f -> Vec3f -> Vec3f
 reflect i n = i -. ((n *.. 2) *.. (i *. n))
 
+-- | Snell's law, see <https://en.wikipedia.org/wiki/Snell%27s_law>.
+refract :: Vec3f -> Vec3f -> Float -> Vec3f
+refract i n refractiveIndex =
+  if k < 0
+  then Vec3f 0 0 0
+  else (i *.. eta) +. (n' *.. (eta * cosi' - sqrt k))
+  where
+    cosi :: Float
+    cosi = negate $ max -1 (min 1 (i *. n))
+
+    etai :: Float
+    etai = 1
+
+    etat :: Float
+    etat = refractiveIndex
+
+    -- If the ray is inside the object, swap the indexes and invert the normal
+    -- to get the correct result.
+    (cosi', etai', etat', n') =
+      if (cosi < 0)
+      then (negate cosi, etat, etai, minus n)
+      else (       cosi, etai, etat,       n)
+
+    eta = etai' / etat'
+
+    k = 1 - eta * eta * (1 - cosi' * cosi')
+
 sceneIntersect
   :: [Sphere] -> Material -> Vec3f -> Vec3f -> Vec3f -> Vec3f
   -> (Bool, Material, Vec3f, Vec3f)
@@ -135,9 +170,10 @@ castRay :: [Sphere] -> [Light] -> Int -> Vec3f -> Vec3f -> Vec3f
 castRay spheres lights depth orig dir =
   if depth > maxDepth || not intersects
   then Vec3f 0.2 0.7 0.8  -- background color
-  else ((_diffuseColor material' *.. diffuseLightIntensity') *..  _v3f_x (_albedo material')) +.
-       ((Vec3f 1 1 1 *.. specularLightIntensity') *.. _v3f_y (_albedo material')) +.
-       (reflectColor *.. _v3f_z (_albedo material'))
+  else ((_diffuseColor material' *.. diffuseLightIntensity') *..  _v4f_x (_albedo material')) +.
+       ((Vec3f 1 1 1 *.. specularLightIntensity') *.. _v4f_y (_albedo material')) +.
+       (reflectColor *.. _v4f_z (_albedo material')) +.
+       (refractColor *.. _v4f_w (_albedo material'))
     where
       (intersects, material', point', n')
         = sceneIntersect spheres material orig dir point n
@@ -158,13 +194,19 @@ castRay spheres lights depth orig dir =
       point = Vec3f 0 0 0
 
       reflectDir = normalize $ reflect dir n'
+      refractDir = normalize $ refract dir n' (_refractiveIndex material')
 
       -- Offset the original point to avoid occlusion by the object itself.
       reflectOrig = if (reflectDir *. n') < 0
                     then point' -. (n' *.. 1e-3)
                     else point' +. (n' *.. 1e-3)
 
+      refractOrig = if (refractDir *. n') < 0
+                    then point' -. (n' *.. 1e-3)
+                    else point' +. (n' *.. 1e-3)
+
       reflectColor = castRay spheres lights (depth + 1) reflectOrig reflectDir
+      refractColor = castRay spheres lights (depth + 1) refractOrig refractDir
 
       diffuseLightIntensity :: Float
       diffuseLightIntensity = 0
@@ -281,19 +323,16 @@ main = do
     readInt :: String -> Maybe Int
     readInt = readMaybe
 
-    ivory :: Material
-    ivory = Material (Vec3f 0.6 0.3 0.1) (Vec3f 0.4 0.4 0.3) 50
-
-    redRubber :: Material
-    redRubber = Material (Vec3f 0.9 0.1 0) (Vec3f 0.3 0.1 0.1) 10
-
-    mirror :: Material
-    mirror = Material (Vec3f 0 10 0.8) (Vec3f 1 1 1) 1425
+    ivory, glass, redRubber, mirror :: Material
+    ivory     = Material   1 (Vec4f 0.6 0.3 0.1   0) (Vec3f 0.4 0.4 0.3)   50
+    glass     = Material 1.5 (Vec4f   0 0.5 0.1 0.8) (Vec3f 0.6 0.7 0.8)  125
+    redRubber = Material   1 (Vec4f 0.9 0.1   0   0) (Vec3f 0.3 0.1 0.1)   10
+    mirror    = Material   1 (Vec4f   0  10 0.8   0) (Vec3f   1   1   1) 1425
 
     spheres :: [Sphere]
     spheres =
       [ Sphere (Vec3f -3    0   -16) 2 ivory
-      , Sphere (Vec3f -1.0 -1.5 -12) 2 mirror
+      , Sphere (Vec3f -1.0 -1.5 -12) 2 glass
       , Sphere (Vec3f  1.5 -0.5 -18) 3 redRubber
       , Sphere (Vec3f  7    5   -18) 4 mirror
       ]
