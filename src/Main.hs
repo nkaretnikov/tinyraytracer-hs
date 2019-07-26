@@ -79,15 +79,19 @@ indexes height width = go 0 0 (width * height) height width
       | j >= h    =         go (i + 1) 0       n       h w
       | otherwise = (j,i) : go (i + 1) j       (n - 1) h w
 
+infixl 7 *.
 (*.) :: Vec3f -> Vec3f -> Float
 (Vec3f x1 y1 z1) *. (Vec3f x2 y2 z2) = x1 * x2 + y1 * y2 + z1 * z2
 
+infixl 7 *..
 (*..) :: Vec3f -> Float -> Vec3f
 (Vec3f x y z) *.. f = Vec3f (x * f) (y * f) (z * f)
 
+infixl 6 +.
 (+.) :: Vec3f -> Vec3f -> Vec3f
 (Vec3f x1 y1 z1) +. (Vec3f x2 y2 z2) = Vec3f (x1 + x2) (y1 + y2) (z1 + z2)
 
+infixl 6 -.
 (-.) :: Vec3f -> Vec3f -> Vec3f
 (Vec3f x1 y1 z1) -. (Vec3f x2 y2 z2) = Vec3f (x1 - x2) (y1 - y2) (z1 - z2)
 
