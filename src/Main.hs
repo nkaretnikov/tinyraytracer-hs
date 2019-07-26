@@ -13,14 +13,25 @@ import Numeric.Limits (maxValue)
 import System.Environment (getArgs, getProgName)
 import Text.Read (readMaybe)
 
-data Vec3f = Vec3f
-  { _x :: {-# UNPACK #-} !Float
-  , _y :: {-# UNPACK #-} !Float
-  , _z :: {-# UNPACK #-} !Float
+data Vec2f = Vec2f
+  { _v2f_x :: {-# UNPACK #-} !Float
+  , _v2f_y :: {-# UNPACK #-} !Float
   } deriving (Eq, Show)
 
--- XXX: Use a newtype?
-type Material = Vec3f
+data Vec3f = Vec3f
+  { _v3f_x :: {-# UNPACK #-} !Float
+  , _v3f_y :: {-# UNPACK #-} !Float
+  , _v3f_z :: {-# UNPACK #-} !Float
+  } deriving (Eq, Show)
+
+data Material = Material
+  { _albedo           :: Vec2f
+  , _diffuseColor     :: Vec3f
+  , _specularExponent :: {-# UNPACK #-} !Float
+  } deriving (Eq, Show)
+
+makeMaterial :: Material
+makeMaterial = Material (Vec2f 1 0) (Vec3f 0 0 0) 0
 
 data Sphere = Sphere
   { _center   :: Vec3f
@@ -35,9 +46,9 @@ data Light = Light
 
 -- XXX: May fail at runtime.
 (!!.) :: Vec3f -> Int -> Float
-(!!.) v 0 = _x v
-(!!.) v 1 = _y v
-(!!.) v 2 = _z v
+(!!.) v 0 = _v3f_x v
+(!!.) v 1 = _v3f_y v
+(!!.) v 2 = _v3f_z v
 (!!.) _ _ = error "invalid index"
 
 intToFloat :: Int -> Float
@@ -71,6 +82,9 @@ indexes height width = go 0 0 (width * height) height width
 (-.) :: Vec3f -> Vec3f -> Vec3f
 (Vec3f x1 y1 z1) -. (Vec3f x2 y2 z2) = Vec3f (x1 - x2) (y1 - y2) (z1 - z2)
 
+minus :: Vec3f -> Vec3f
+minus v = v *.. -1
+
 -- http://web.archive.org/web/20170707080450/http://www.lighthouse3d.com/tutorials/maths/ray-sphere-intersection/
 rayIntersect :: Sphere -> Vec3f -> Vec3f -> Float -> (Bool, Float)
 rayIntersect (Sphere center radius _) orig dir t0
@@ -93,6 +107,9 @@ rayIntersect (Sphere center radius _) orig dir t0
 
     t1 = tca - thc
     t2 = tca + thc
+
+reflect :: Vec3f -> Vec3f -> Vec3f
+reflect i n = i -. ((n *.. 2) *.. (i *. n))
 
 sceneIntersect
   :: [Sphere] -> Material -> Vec3f -> Vec3f -> Vec3f -> Vec3f
@@ -117,14 +134,17 @@ sceneIntersect ss m o d p n = (sd < 1000, m', p', n')
 castRay :: [Sphere] -> [Light] -> Vec3f -> Vec3f -> Vec3f
 castRay spheres lights orig dir =
   if intersects
-  then material' *.. diffuseLightIntensity'
+  then ((_diffuseColor material' *.. diffuseLightIntensity') *..  _v2f_x (_albedo material')) +.
+       ((Vec3f 1 1 1 *.. specularLightIntensity') *.. _v2f_y (_albedo material'))
   else Vec3f 0.2 0.7 0.8  -- background color
     where
-      (intersects, material', point', n') = sceneIntersect spheres material orig dir point n
-      diffuseLightIntensity' = go diffuseLightIntensity lights
+      (intersects, material', point', n')
+        = sceneIntersect spheres material orig dir point n
+      (diffuseLightIntensity', specularLightIntensity')
+        = go diffuseLightIntensity specularLightIntensity lights
 
-      material :: Vec3f
-      material = Vec3f 0 0 0
+      material :: Material
+      material = makeMaterial
 
       n :: Vec3f
       n = Vec3f 0 0 0
@@ -135,12 +155,18 @@ castRay spheres lights orig dir =
       diffuseLightIntensity :: Float
       diffuseLightIntensity = 0
 
-      go :: Float -> [Light] -> Float
-      go dli []     = dli
-      go dli (l:ls) =
+      specularLightIntensity :: Float
+      specularLightIntensity = 0
+
+      go :: Float -> Float -> [Light] -> (Float, Float)
+      go dli sli []     = (dli, sli)
+      go dli sli (l:ls) =
         let lightDir = normalize $ (_position l) -. point'
             dli'     = dli + (_intensity l) * (max 0 (lightDir *. n'))
-        in go dli' ls
+            refl     = minus $ reflect (minus lightDir) n'
+            sli'     = sli + ((max 0 (refl *. dir)) ** (_specularExponent material'))
+                     * _intensity l
+        in go dli' sli' ls
 
 normalize :: Vec3f -> Vec3f
 normalize v = v *.. (l  / norm v)
@@ -198,7 +224,12 @@ render file width height spheres lights =
         -- XXX: Take advantage of the Haskell 'Vec3f' representation.
         -- In the original C++ code, 'Vec3f' is just an array of size 3.
         flip fmap (indexes (width * height) 3) $ \(i,j) ->
-          floatToWord8 $ (intToFloat ppmMaxVal) * (max 0 (min 1 (framebuffer V.! i !!. j)))
+          let c@(Vec3f x y z) = framebuffer V.! i
+              fmax            = max x $ max y z
+              c'              = c *.. (1 / fmax)
+          in if (fmax > 1)
+             then floatToWord8 $ (intToFloat ppmMaxVal) * (max 0 (min 1 (c' !!. j)))
+             else floatToWord8 $ (intToFloat ppmMaxVal) * (max 0 (min 1 (c  !!. j)))
 
 usage :: IO ()
 usage = do
@@ -219,10 +250,10 @@ main = do
     readInt = readMaybe
 
     ivory :: Material
-    ivory = Vec3f 0.4 0.4 0.3
+    ivory = Material (Vec2f 0.6 0.3) (Vec3f 0.4 0.4 0.3) 50
 
     redRubber :: Material
-    redRubber = Vec3f 0.3 0.1 0.1
+    redRubber = Material (Vec2f 0.9 0.1) (Vec3f 0.3 0.1 0.1) 10
 
     spheres :: [Sphere]
     spheres =
@@ -234,5 +265,7 @@ main = do
 
     lights :: [Light]
     lights =
-      [ Light (Vec3f -20 20 20) 1.5
+      [ Light (Vec3f -20 20  20) 1.5
+      , Light (Vec3f  30 50 -25) 1.8
+      , Light (Vec3f  30 20  30) 1.7
       ]
