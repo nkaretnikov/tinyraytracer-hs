@@ -90,7 +90,7 @@ rayIntersect :: Sphere -> Vec3f -> Vec3f -> Float -> (Bool, Float)
 rayIntersect (Sphere center radius _) orig dir t0
   | d2 > radius * radius = (False, t0)
   | t1 < 0 && t2 < 0     = (False, t2)
-  | t1 < 0               = (True, t1)
+  | t1 < 0               = (True, t2)
   | otherwise            = (True, t1)
   where
     l :: Vec3f
